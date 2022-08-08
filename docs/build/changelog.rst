@@ -4,8 +4,38 @@ Changelog
 ==========
 
 .. changelog::
-    :version: 1.8.1
+    :version: 1.8.2
     :include_notes_from: unreleased
+
+.. changelog::
+    :version: 1.8.1
+    :released: July 13, 2022
+
+    .. change::
+        :tags: bug, sqlite
+        :tickets: 1065
+
+        Fixed bug where the SQLite implementation of
+        :meth:`.Operations.rename_table` would render an explicit schema name for
+        both the old and new table name, which while is the standard ALTER syntax,
+        is not accepted by SQLite's syntax which doesn't support a rename across
+        schemas. In particular, the syntax issue would prevent batch mode from
+        working for SQLite databases that made use of attached databases (which are
+        treated as "schemas" in SQLAlchemy).
+
+    .. change::
+        :tags: bug, batch
+        :tickets: 1021
+
+        Added an error raise for the condition where
+        :meth:`.Operations.batch_alter_table` is used in ``--sql`` mode, where the
+        operation requires table reflection, as is the case when running against
+        SQLite without giving it a fixed ``Table`` object. Previously the operation
+        would fail with an internal error.   To get a "move and copy" batch
+        operation as a SQL script without connecting to a database,
+        a ``Table`` object should be passed to the
+        :paramref:`.Operations.batch_alter_table.copy_from` parameter so that
+        reflection may be skipped.
 
 .. changelog::
     :version: 1.8.0
@@ -589,7 +619,7 @@ Changelog
         also changing the column type, would cause an ALTER COLUMN operation to
         incorrectly render a second ALTER statement without the nullability if a
         new type were also present, as the MSSQL-specific contract did not
-        anticipate all three of "nullability", "type_" and "existing_type" being
+        anticipate all three of "nullability", ``"type_"`` and "existing_type" being
         sent at the same time.
 
 
@@ -870,7 +900,7 @@ Changelog
         yet been updated, these can be modified directly in order to maintain
         compatibility:
 
-        * :meth:`.Operations.drop_constraint` - "type" (use "type_") and "name"
+        * :meth:`.Operations.drop_constraint` - "type" (use ``"type_"``) and "name"
           (use "constraint_name")
 
         * :meth:`.Operations.create_primary_key` - "cols" (use "columns") and
@@ -2296,10 +2326,10 @@ Changelog
       :tags: bug, batch
       :tickets: 391
 
-      Batch mode will not use CAST() to copy data if type_ is given, however
+      Batch mode will not use CAST() to copy data if ``type_`` is given, however
       the basic type affinity matches that of the existing type.  This to
       avoid SQLite's CAST of TIMESTAMP which results in truncation of the
-      data, in those cases where the user needs to add redundant type_ for
+      data, in those cases where the user needs to add redundant ``type_`` for
       other reasons.
 
     .. change::
@@ -3686,8 +3716,8 @@ Changelog
 
       Added quoting to the table name when the special EXEC is run to
       drop any existing server defaults or constraints when the
-      :paramref:`.drop_column.mssql_drop_check` or
-      :paramref:`.drop_column.mssql_drop_default`
+      :paramref:`.Operations.drop_column.mssql_drop_check` or
+      :paramref:`.Operations.drop_column.mssql_drop_default`
       arguments are used.
 
     .. change::
