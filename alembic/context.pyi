@@ -2,8 +2,11 @@
 # ### imports are manually managed
 from __future__ import annotations
 
+from typing import Any
 from typing import Callable
 from typing import ContextManager
+from typing import Dict
+from typing import List
 from typing import Optional
 from typing import TextIO
 from typing import Tuple
@@ -12,6 +15,7 @@ from typing import Union
 
 if TYPE_CHECKING:
     from sqlalchemy.engine.base import Connection
+    from sqlalchemy.sql.elements import ClauseElement
     from sqlalchemy.sql.schema import MetaData
 
     from .config import Config
@@ -94,7 +98,7 @@ def configure(
     sqlalchemy_module_prefix: str = "sa.",
     user_module_prefix: Optional[str] = None,
     on_version_apply: Optional[Callable] = None,
-    **kw,
+    **kw: Any,
 ) -> None:
     """Configure a :class:`.MigrationContext` within this
     :class:`.EnvironmentContext` which will provide database
@@ -529,7 +533,9 @@ def configure(
 
     """
 
-def execute(sql, execution_options=None):
+def execute(
+    sql: Union[ClauseElement, str], execution_options: Optional[dict] = None
+) -> None:
     """Execute the given SQL using the current change context.
 
     The behavior of :meth:`.execute` is the same
@@ -542,7 +548,7 @@ def execute(sql, execution_options=None):
 
     """
 
-def get_bind():
+def get_bind() -> Connection:
     """Return the current 'bind'.
 
     In "online" mode, this is the
@@ -634,7 +640,9 @@ def get_tag_argument() -> Optional[str]:
 
     """
 
-def get_x_argument(as_dictionary: bool = False):
+def get_x_argument(
+    as_dictionary: bool = False,
+) -> Union[List[str], Dict[str, str]]:
     """Return the value(s) passed for the ``-x`` argument, if any.
 
     The ``-x`` argument is an open ended flag that allows any user-defined
@@ -699,7 +707,7 @@ def is_transactional_ddl():
 
     """
 
-def run_migrations(**kw) -> None:
+def run_migrations(**kw: Any) -> None:
     """Run migrations as determined by the current command line
     configuration
     as well as versioning information present (or not) in the current
@@ -722,7 +730,7 @@ def run_migrations(**kw) -> None:
 
 script: ScriptDirectory
 
-def static_output(text):
+def static_output(text: str) -> None:
     """Emit text directly to the "offline" SQL stream.
 
     Typically this is for emitting comments that

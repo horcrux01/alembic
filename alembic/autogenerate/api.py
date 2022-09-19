@@ -430,7 +430,8 @@ class AutogenContext:
 
     @util.memoized_property
     def sorted_tables(self):
-        """Return an aggregate of the :attr:`.MetaData.sorted_tables` collection(s).
+        """Return an aggregate of the :attr:`.MetaData.sorted_tables`
+        collection(s).
 
         For a sequence of :class:`.MetaData` objects, this
         concatenates the :attr:`.MetaData.sorted_tables` collection
@@ -522,12 +523,12 @@ class RevisionContext:
 
     def run_autogenerate(
         self, rev: tuple, migration_context: "MigrationContext"
-    ):
+    ) -> None:
         self._run_environment(rev, migration_context, True)
 
     def run_no_autogenerate(
         self, rev: tuple, migration_context: "MigrationContext"
-    ):
+    ) -> None:
         self._run_environment(rev, migration_context, False)
 
     def _run_environment(
@@ -535,7 +536,7 @@ class RevisionContext:
         rev: tuple,
         migration_context: "MigrationContext",
         autogenerate: bool,
-    ):
+    ) -> None:
         if autogenerate:
             if self.command_args["sql"]:
                 raise util.CommandError(
