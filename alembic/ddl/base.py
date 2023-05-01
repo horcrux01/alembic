@@ -20,6 +20,8 @@ from ..util.sqla_compat import _is_type_bound  # noqa
 from ..util.sqla_compat import _table_for_constraint  # noqa
 
 if TYPE_CHECKING:
+    from typing import Any
+
     from sqlalchemy.sql.compiler import Compiled
     from sqlalchemy.sql.compiler import DDLCompiler
     from sqlalchemy.sql.elements import TextClause
@@ -31,7 +33,7 @@ if TYPE_CHECKING:
     from ..util.sqla_compat import Computed
     from ..util.sqla_compat import Identity
 
-_ServerDefault = Union["TextClause", "FetchedValue", "Function", str]
+_ServerDefault = Union["TextClause", "FetchedValue", "Function[Any]", str]
 
 
 class AlterTable(DDLElement):
@@ -46,7 +48,7 @@ class AlterTable(DDLElement):
     def __init__(
         self,
         table_name: str,
-        schema: Optional[Union["quoted_name", str]] = None,
+        schema: Optional[Union[quoted_name, str]] = None,
     ) -> None:
         self.table_name = table_name
         self.schema = schema
@@ -56,10 +58,10 @@ class RenameTable(AlterTable):
     def __init__(
         self,
         old_table_name: str,
-        new_table_name: Union["quoted_name", str],
-        schema: Optional[Union["quoted_name", str]] = None,
+        new_table_name: Union[quoted_name, str],
+        schema: Optional[Union[quoted_name, str]] = None,
     ) -> None:
-        super(RenameTable, self).__init__(old_table_name, schema=schema)
+        super().__init__(old_table_name, schema=schema)
         self.new_table_name = new_table_name
 
 
@@ -69,12 +71,12 @@ class AlterColumn(AlterTable):
         name: str,
         column_name: str,
         schema: Optional[str] = None,
-        existing_type: Optional["TypeEngine"] = None,
+        existing_type: Optional[TypeEngine] = None,
         existing_nullable: Optional[bool] = None,
         existing_server_default: Optional[_ServerDefault] = None,
         existing_comment: Optional[str] = None,
     ) -> None:
-        super(AlterColumn, self).__init__(name, schema=schema)
+        super().__init__(name, schema=schema)
         self.column_name = column_name
         self.existing_type = (
             sqltypes.to_instance(existing_type)
@@ -90,15 +92,15 @@ class ColumnNullable(AlterColumn):
     def __init__(
         self, name: str, column_name: str, nullable: bool, **kw
     ) -> None:
-        super(ColumnNullable, self).__init__(name, column_name, **kw)
+        super().__init__(name, column_name, **kw)
         self.nullable = nullable
 
 
 class ColumnType(AlterColumn):
     def __init__(
-        self, name: str, column_name: str, type_: "TypeEngine", **kw
+        self, name: str, column_name: str, type_: TypeEngine, **kw
     ) -> None:
-        super(ColumnType, self).__init__(name, column_name, **kw)
+        super().__init__(name, column_name, **kw)
         self.type_ = sqltypes.to_instance(type_)
 
 
@@ -106,7 +108,7 @@ class ColumnName(AlterColumn):
     def __init__(
         self, name: str, column_name: str, newname: str, **kw
     ) -> None:
-        super(ColumnName, self).__init__(name, column_name, **kw)
+        super().__init__(name, column_name, **kw)
         self.newname = newname
 
 
@@ -118,15 +120,15 @@ class ColumnDefault(AlterColumn):
         default: Optional[_ServerDefault],
         **kw,
     ) -> None:
-        super(ColumnDefault, self).__init__(name, column_name, **kw)
+        super().__init__(name, column_name, **kw)
         self.default = default
 
 
 class ComputedColumnDefault(AlterColumn):
     def __init__(
-        self, name: str, column_name: str, default: Optional["Computed"], **kw
+        self, name: str, column_name: str, default: Optional[Computed], **kw
     ) -> None:
-        super(ComputedColumnDefault, self).__init__(name, column_name, **kw)
+        super().__init__(name, column_name, **kw)
         self.default = default
 
 
@@ -135,11 +137,11 @@ class IdentityColumnDefault(AlterColumn):
         self,
         name: str,
         column_name: str,
-        default: Optional["Identity"],
-        impl: "DefaultImpl",
+        default: Optional[Identity],
+        impl: DefaultImpl,
         **kw,
     ) -> None:
-        super(IdentityColumnDefault, self).__init__(name, column_name, **kw)
+        super().__init__(name, column_name, **kw)
         self.default = default
         self.impl = impl
 
@@ -148,18 +150,18 @@ class AddColumn(AlterTable):
     def __init__(
         self,
         name: str,
-        column: "Column",
-        schema: Optional[Union["quoted_name", str]] = None,
+        column: Column,
+        schema: Optional[Union[quoted_name, str]] = None,
     ) -> None:
-        super(AddColumn, self).__init__(name, schema=schema)
+        super().__init__(name, schema=schema)
         self.column = column
 
 
 class DropColumn(AlterTable):
     def __init__(
-        self, name: str, column: "Column", schema: Optional[str] = None
+        self, name: str, column: Column, schema: Optional[str] = None
     ) -> None:
-        super(DropColumn, self).__init__(name, schema=schema)
+        super().__init__(name, schema=schema)
         self.column = column
 
 
@@ -167,13 +169,13 @@ class ColumnComment(AlterColumn):
     def __init__(
         self, name: str, column_name: str, comment: Optional[str], **kw
     ) -> None:
-        super(ColumnComment, self).__init__(name, column_name, **kw)
+        super().__init__(name, column_name, **kw)
         self.comment = comment
 
 
 @compiles(RenameTable)
 def visit_rename_table(
-    element: "RenameTable", compiler: "DDLCompiler", **kw
+    element: RenameTable, compiler: DDLCompiler, **kw
 ) -> str:
     return "%s RENAME TO %s" % (
         alter_table(compiler, element.table_name, element.schema),
@@ -182,9 +184,7 @@ def visit_rename_table(
 
 
 @compiles(AddColumn)
-def visit_add_column(
-    element: "AddColumn", compiler: "DDLCompiler", **kw
-) -> str:
+def visit_add_column(element: AddColumn, compiler: DDLCompiler, **kw) -> str:
     return "%s %s" % (
         alter_table(compiler, element.table_name, element.schema),
         add_column(compiler, element.column, **kw),
@@ -192,9 +192,7 @@ def visit_add_column(
 
 
 @compiles(DropColumn)
-def visit_drop_column(
-    element: "DropColumn", compiler: "DDLCompiler", **kw
-) -> str:
+def visit_drop_column(element: DropColumn, compiler: DDLCompiler, **kw) -> str:
     return "%s %s" % (
         alter_table(compiler, element.table_name, element.schema),
         drop_column(compiler, element.column.name, **kw),
@@ -203,7 +201,7 @@ def visit_drop_column(
 
 @compiles(ColumnNullable)
 def visit_column_nullable(
-    element: "ColumnNullable", compiler: "DDLCompiler", **kw
+    element: ColumnNullable, compiler: DDLCompiler, **kw
 ) -> str:
     return "%s %s %s" % (
         alter_table(compiler, element.table_name, element.schema),
@@ -213,9 +211,7 @@ def visit_column_nullable(
 
 
 @compiles(ColumnType)
-def visit_column_type(
-    element: "ColumnType", compiler: "DDLCompiler", **kw
-) -> str:
+def visit_column_type(element: ColumnType, compiler: DDLCompiler, **kw) -> str:
     return "%s %s %s" % (
         alter_table(compiler, element.table_name, element.schema),
         alter_column(compiler, element.column_name),
@@ -224,9 +220,7 @@ def visit_column_type(
 
 
 @compiles(ColumnName)
-def visit_column_name(
-    element: "ColumnName", compiler: "DDLCompiler", **kw
-) -> str:
+def visit_column_name(element: ColumnName, compiler: DDLCompiler, **kw) -> str:
     return "%s RENAME %s TO %s" % (
         alter_table(compiler, element.table_name, element.schema),
         format_column_name(compiler, element.column_name),
@@ -236,7 +230,7 @@ def visit_column_name(
 
 @compiles(ColumnDefault)
 def visit_column_default(
-    element: "ColumnDefault", compiler: "DDLCompiler", **kw
+    element: ColumnDefault, compiler: DDLCompiler, **kw
 ) -> str:
     return "%s %s %s" % (
         alter_table(compiler, element.table_name, element.schema),
@@ -249,7 +243,7 @@ def visit_column_default(
 
 @compiles(ComputedColumnDefault)
 def visit_computed_column(
-    element: "ComputedColumnDefault", compiler: "DDLCompiler", **kw
+    element: ComputedColumnDefault, compiler: DDLCompiler, **kw
 ):
     raise exc.CompileError(
         'Adding or removing a "computed" construct, e.g. GENERATED '
@@ -259,7 +253,7 @@ def visit_computed_column(
 
 @compiles(IdentityColumnDefault)
 def visit_identity_column(
-    element: "IdentityColumnDefault", compiler: "DDLCompiler", **kw
+    element: IdentityColumnDefault, compiler: DDLCompiler, **kw
 ):
     raise exc.CompileError(
         'Adding, removing or modifying an "identity" construct, '
@@ -269,8 +263,8 @@ def visit_identity_column(
 
 
 def quote_dotted(
-    name: Union["quoted_name", str], quote: functools.partial
-) -> Union["quoted_name", str]:
+    name: Union[quoted_name, str], quote: functools.partial
+) -> Union[quoted_name, str]:
     """quote the elements of a dotted name"""
 
     if isinstance(name, quoted_name):
@@ -280,10 +274,10 @@ def quote_dotted(
 
 
 def format_table_name(
-    compiler: "Compiled",
-    name: Union["quoted_name", str],
-    schema: Optional[Union["quoted_name", str]],
-) -> Union["quoted_name", str]:
+    compiler: Compiled,
+    name: Union[quoted_name, str],
+    schema: Optional[Union[quoted_name, str]],
+) -> Union[quoted_name, str]:
     quote = functools.partial(compiler.preparer.quote)
     if schema:
         return quote_dotted(schema, quote) + "." + quote(name)
@@ -292,13 +286,13 @@ def format_table_name(
 
 
 def format_column_name(
-    compiler: "DDLCompiler", name: Optional[Union["quoted_name", str]]
-) -> Union["quoted_name", str]:
+    compiler: DDLCompiler, name: Optional[Union[quoted_name, str]]
+) -> Union[quoted_name, str]:
     return compiler.preparer.quote(name)  # type: ignore[arg-type]
 
 
 def format_server_default(
-    compiler: "DDLCompiler",
+    compiler: DDLCompiler,
     default: Optional[_ServerDefault],
 ) -> str:
     return compiler.get_column_default_string(
@@ -306,27 +300,27 @@ def format_server_default(
     )
 
 
-def format_type(compiler: "DDLCompiler", type_: "TypeEngine") -> str:
+def format_type(compiler: DDLCompiler, type_: TypeEngine) -> str:
     return compiler.dialect.type_compiler.process(type_)
 
 
 def alter_table(
-    compiler: "DDLCompiler",
+    compiler: DDLCompiler,
     name: str,
     schema: Optional[str],
 ) -> str:
     return "ALTER TABLE %s" % format_table_name(compiler, name, schema)
 
 
-def drop_column(compiler: "DDLCompiler", name: str, **kw) -> str:
+def drop_column(compiler: DDLCompiler, name: str, **kw) -> str:
     return "DROP COLUMN %s" % format_column_name(compiler, name)
 
 
-def alter_column(compiler: "DDLCompiler", name: str) -> str:
+def alter_column(compiler: DDLCompiler, name: str) -> str:
     return "ALTER COLUMN %s" % format_column_name(compiler, name)
 
 
-def add_column(compiler: "DDLCompiler", column: "Column", **kw) -> str:
+def add_column(compiler: DDLCompiler, column: Column, **kw) -> str:
     text = "ADD COLUMN %s" % compiler.get_column_specification(column, **kw)
 
     const = " ".join(

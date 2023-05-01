@@ -13,6 +13,7 @@ sys.path.append(str(Path(__file__).parent.parent))
 if True:  # avoid flake/zimports messing with the order
     from alembic.operations.base import Operations
     from alembic.runtime.environment import EnvironmentContext
+    from alembic.runtime.migration import MigrationContext
     from alembic.script.write_hooks import console_scripts
     from alembic.util.compat import inspect_formatargspec
     from alembic.util.compat import inspect_getfullargspec
@@ -32,6 +33,7 @@ TRIM_MODULE = [
     "alembic.operations.base.",
     "alembic.operations.ops.",
     "sqlalchemy.engine.base.",
+    "sqlalchemy.engine.url.",
     "sqlalchemy.sql.schema.",
     "sqlalchemy.sql.selectable.",
     "sqlalchemy.sql.elements.",
@@ -40,6 +42,7 @@ TRIM_MODULE = [
     "sqlalchemy.sql.dml.",
 ]
 CONTEXT_MANAGERS = {"op": ["batch_alter_table"]}
+ADDITIONAL_ENV = {"MigrationContext": MigrationContext}
 
 
 def generate_pyi_for_proxy(
@@ -52,8 +55,10 @@ def generate_pyi_for_proxy(
 ):
     ignore_items = IGNORE_ITEMS.get(file_key, set())
     context_managers = CONTEXT_MANAGERS.get(file_key, [])
-    if sys.version_info < (3, 9):
-        raise RuntimeError("This script must be run with Python 3.9 or higher")
+    if sys.version_info < (3, 11):
+        raise RuntimeError(
+            "This script must be run with Python 3.11 or higher"
+        )
 
     # When using an absolute path on windows, this will generate the correct
     # relative path that shall be written to the top comment of the pyi file.
@@ -90,6 +95,7 @@ def generate_pyi_for_proxy(
             **sa.sql.schema.__dict__,
             **sa.__dict__,
             **sa.types.__dict__,
+            **ADDITIONAL_ENV,
             **ops.__dict__,
             **module.__dict__,
         }
@@ -99,9 +105,31 @@ def generate_pyi_for_proxy(
                 continue
             meth = getattr(cls, name, None)
             if callable(meth):
-                _generate_stub_for_meth(
-                    cls, name, printer, env, name in context_managers
-                )
+                # If there are overloads, generate only those
+                # Do not generate the base implementation to avoid mypy errors
+                overloads = typing.get_overloads(meth)
+                if overloads:
+                    # use enumerate so we can generate docs on the
+                    # last overload
+                    for i, ovl in enumerate(overloads, 1):
+                        _generate_stub_for_meth(
+                            ovl,
+                            cls,
+                            printer,
+                            env,
+                            is_context_manager=name in context_managers,
+                            is_overload=True,
+                            base_method=meth,
+                            gen_docs=(i == len(overloads)),
+                        )
+                else:
+                    _generate_stub_for_meth(
+                        meth,
+                        cls,
+                        printer,
+                        env,
+                        is_context_manager=name in context_managers,
+                    )
             else:
                 _generate_stub_for_attr(cls, name, printer, env)
 
@@ -125,7 +153,7 @@ def generate_pyi_for_proxy(
 def _generate_stub_for_attr(cls, name, printer, env):
     try:
         annotations = typing.get_type_hints(cls, env)
-    except NameError as e:
+    except NameError:
         annotations = cls.__annotations__
     type_ = annotations.get(name, "Any")
     if isinstance(type_, str) and type_[0] in "'\"":
@@ -133,12 +161,20 @@ def _generate_stub_for_attr(cls, name, printer, env):
     printer.writeline(f"{name}: {type_}")
 
 
-def _generate_stub_for_meth(cls, name, printer, env, is_context_manager):
-
-    fn = getattr(cls, name)
+def _generate_stub_for_meth(
+    fn,
+    cls,
+    printer,
+    env,
+    is_context_manager,
+    is_overload=False,
+    base_method=None,
+    gen_docs=True,
+):
     while hasattr(fn, "__wrapped__"):
         fn = fn.__wrapped__
 
+    name = fn.__name__
     spec = inspect_getfullargspec(fn)
     try:
         annotations = typing.get_type_hints(fn, env)
@@ -155,10 +191,7 @@ def _generate_stub_for_meth(cls, name, printer, env, is_context_manager):
         if getattr(annotation, "__module__", None) == "typing":
             retval = repr(annotation).replace("typing.", "")
         elif isinstance(annotation, type):
-            if annotation.__module__ in ("builtins", base_module):
-                retval = annotation.__qualname__
-            else:
-                retval = annotation.__module__ + "." + annotation.__qualname__
+            retval = annotation.__qualname__
         else:
             retval = annotation
 
@@ -171,19 +204,33 @@ def _generate_stub_for_meth(cls, name, printer, env, is_context_manager):
         retval = re.sub("NoneType", "None", retval)
         return retval
 
+    def _formatvalue(value):
+        return "=" + ("..." if value is Ellipsis else repr(value))
+
     argspec = inspect_formatargspec(
         *spec,
         formatannotation=_formatannotation,
+        formatvalue=_formatvalue,
         formatreturns=lambda val: f"-> {_formatannotation(val)}",
     )
+
+    overload = "@overload" if is_overload else ""
     contextmanager = "@contextmanager" if is_context_manager else ""
+
+    fn_doc = base_method.__doc__ if base_method else fn.__doc__
+    has_docs = gen_docs and fn_doc is not None
+    string_prefix = "r" if chr(92) in fn_doc else ""
+    docs = f'{string_prefix}"""' + f"{fn_doc}" + '"""' if has_docs else ""
+
     func_text = textwrap.dedent(
         f"""
+    {overload}
     {contextmanager}
-    def {name}{argspec}:
-        '''{fn.__doc__}'''
+    def {name}{argspec}: {"..." if not docs else ""}
+        {docs}
     """
     )
+
     printer.write_indented_block(func_text)
 
 

@@ -41,7 +41,7 @@ class SQLiteImpl(DefaultImpl):
     """
 
     def requires_recreate_in_batch(
-        self, batch_op: "BatchOperationsImpl"
+        self, batch_op: BatchOperationsImpl
     ) -> bool:
         """Return True if the given :class:`.BatchOperationsImpl`
         would need the table to be recreated and copied in order to
@@ -68,7 +68,7 @@ class SQLiteImpl(DefaultImpl):
         else:
             return False
 
-    def add_constraint(self, const: "Constraint"):
+    def add_constraint(self, const: Constraint):
         # attempt to distinguish between an
         # auto-gen constraint and an explicit one
         if const._create_rule is None:  # type:ignore[attr-defined]
@@ -85,7 +85,7 @@ class SQLiteImpl(DefaultImpl):
                 "SQLite migrations using a copy-and-move strategy."
             )
 
-    def drop_constraint(self, const: "Constraint"):
+    def drop_constraint(self, const: Constraint):
         if const._create_rule is None:  # type:ignore[attr-defined]
             raise NotImplementedError(
                 "No support for ALTER of constraints in SQLite dialect. "
@@ -95,8 +95,8 @@ class SQLiteImpl(DefaultImpl):
 
     def compare_server_default(
         self,
-        inspector_column: "Column",
-        metadata_column: "Column",
+        inspector_column: Column,
+        metadata_column: Column,
         rendered_metadata_default: Optional[str],
         rendered_inspector_default: Optional[str],
     ) -> bool:
@@ -111,6 +111,10 @@ class SQLiteImpl(DefaultImpl):
             )
 
         if rendered_inspector_default is not None:
+            rendered_inspector_default = re.sub(
+                r"^\((.+)\)$", r"\1", rendered_inspector_default
+            )
+
             rendered_inspector_default = re.sub(
                 r"^\"?'(.+)'\"?$", r"\1", rendered_inspector_default
             )
@@ -140,8 +144,8 @@ class SQLiteImpl(DefaultImpl):
 
     def autogen_column_reflect(
         self,
-        inspector: "Inspector",
-        table: "Table",
+        inspector: Inspector,
+        table: Table,
         column_info: Dict[str, Any],
     ) -> None:
         # SQLite expression defaults require parenthesis when sent
@@ -152,11 +156,11 @@ class SQLiteImpl(DefaultImpl):
             column_info["default"] = "(%s)" % (column_info["default"],)
 
     def render_ddl_sql_expr(
-        self, expr: "ClauseElement", is_server_default: bool = False, **kw
+        self, expr: ClauseElement, is_server_default: bool = False, **kw
     ) -> str:
         # SQLite expression defaults require parenthesis when sent
         # as DDL
-        str_expr = super(SQLiteImpl, self).render_ddl_sql_expr(
+        str_expr = super().render_ddl_sql_expr(
             expr, is_server_default=is_server_default, **kw
         )
 
@@ -169,9 +173,9 @@ class SQLiteImpl(DefaultImpl):
 
     def cast_for_batch_migrate(
         self,
-        existing: "Column",
-        existing_transfer: Dict[str, Union["TypeEngine", "Cast"]],
-        new_type: "TypeEngine",
+        existing: Column,
+        existing_transfer: Dict[str, Union[TypeEngine, Cast]],
+        new_type: TypeEngine,
     ) -> None:
         if (
             existing.type._type_affinity  # type:ignore[attr-defined]
@@ -182,10 +186,20 @@ class SQLiteImpl(DefaultImpl):
                 existing_transfer["expr"], new_type
             )
 
+    def correct_for_autogen_constraints(
+        self,
+        conn_unique_constraints,
+        conn_indexes,
+        metadata_unique_constraints,
+        metadata_indexes,
+    ):
+
+        self._skip_functional_indexes(metadata_indexes, conn_indexes)
+
 
 @compiles(RenameTable, "sqlite")
 def visit_rename_table(
-    element: "RenameTable", compiler: "DDLCompiler", **kw
+    element: RenameTable, compiler: DDLCompiler, **kw
 ) -> str:
     return "%s RENAME TO %s" % (
         alter_table(compiler, element.table_name, element.schema),

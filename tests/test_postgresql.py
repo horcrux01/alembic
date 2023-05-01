@@ -19,13 +19,16 @@ from sqlalchemy import types
 from sqlalchemy import UniqueConstraint
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.dialects.postgresql import BYTEA
+from sqlalchemy.dialects.postgresql import ExcludeConstraint
 from sqlalchemy.dialects.postgresql import HSTORE
 from sqlalchemy.dialects.postgresql import JSON
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import TSRANGE
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import column
 from sqlalchemy.sql import false
 from sqlalchemy.sql import table
+from sqlalchemy.sql.expression import literal_column
 
 from alembic import autogenerate
 from alembic import command
@@ -39,7 +42,6 @@ from alembic.migration import MigrationContext
 from alembic.operations import ops
 from alembic.script import ScriptDirectory
 from alembic.testing import assert_raises_message
-from alembic.testing import assertions
 from alembic.testing import combinations
 from alembic.testing import config
 from alembic.testing import eq_
@@ -838,9 +840,7 @@ class PostgresqlDetectSerialTest(TestBase):
         insp = inspect(config.db)
 
         uo = ops.UpgradeOps(ops=[])
-        _compare_tables(
-            set([(None, "t")]), set([]), insp, uo, self.autogen_context
-        )
+        _compare_tables({(None, "t")}, set(), insp, uo, self.autogen_context)
         diffs = uo.as_diffs()
         tab = diffs[0][1]
 
@@ -857,8 +857,8 @@ class PostgresqlDetectSerialTest(TestBase):
         Table("t", m2, Column("x", BigInteger()))
         self.autogen_context.metadata = m2
         _compare_tables(
-            set([(None, "t")]),
-            set([(None, "t")]),
+            {(None, "t")},
+            {(None, "t")},
             insp,
             uo,
             self.autogen_context,
@@ -1157,6 +1157,64 @@ class PostgresqlAutogenRenderTest(TestBase):
             "name='TExclX'))",
         )
 
+    def test_inline_exclude_constraint_literal_column(self):
+        """test for #1184"""
+
+        autogen_context = self.autogen_context
+
+        m = MetaData()
+        t = Table(
+            "TTable",
+            m,
+            Column("id", String()),
+            ExcludeConstraint(
+                (literal_column("id + 2"), "="), name="TExclID", using="gist"
+            ),
+        )
+
+        op_obj = ops.CreateTableOp.from_table(t)
+
+        eq_ignore_whitespace(
+            autogenerate.render_op_text(autogen_context, op_obj),
+            "op.create_table('TTable',sa.Column('id', sa.String(), "
+            "nullable=True),"
+            "postgresql.ExcludeConstraint((sa.literal_column('id + 2'), '='), "
+            "using='gist', "
+            "name='TExclID'))",
+        )
+
+    @config.requirements.sqlalchemy_2
+    def test_inline_exclude_constraint_text(self):
+        """test for #1184.
+
+        Requires SQLAlchemy 2.0.5 due to issue
+        https://github.com/sqlalchemy/sqlalchemy/issues/9401
+
+        """
+
+        autogen_context = self.autogen_context
+
+        m = MetaData()
+        t = Table(
+            "TTable",
+            m,
+            Column("id", String()),
+            ExcludeConstraint(
+                (text("id + 2"), "="), name="TExclID", using="gist"
+            ),
+        )
+
+        op_obj = ops.CreateTableOp.from_table(t)
+
+        eq_ignore_whitespace(
+            autogenerate.render_op_text(autogen_context, op_obj),
+            "op.create_table('TTable',sa.Column('id', sa.String(), "
+            "nullable=True),"
+            "postgresql.ExcludeConstraint((sa.text('id + 2'), '='), "
+            "using='gist', "
+            "name='TExclID'))",
+        )
+
     def test_json_type(self):
         eq_ignore_whitespace(
             autogenerate.render._repr_type(JSON(), self.autogen_context),
@@ -1250,7 +1308,6 @@ class PGUniqueIndexAutogenerateTest(AutogenFixtureTest, TestBase):
 
     @config.requirements.btree_gist
     def test_exclude_const_unchanged(self):
-        from sqlalchemy.dialects.postgresql import TSRANGE, ExcludeConstraint
 
         m1 = MetaData()
         m2 = MetaData()
@@ -1307,64 +1364,3 @@ class PGUniqueIndexAutogenerateTest(AutogenFixtureTest, TestBase):
         eq_(diffs[0][0], "remove_constraint")
         eq_(diffs[0][1].name, "uq_name")
         eq_(len(diffs), 1)
-
-    def _functional_index_warn(self):
-        return (r"Skip.*refl",)
-
-    def test_functional_ix_one(self):
-        m1 = MetaData()
-        m2 = MetaData()
-
-        t1 = Table(
-            "foo",
-            m1,
-            Column("id", Integer, primary_key=True),
-            Column("email", String(50)),
-        )
-        Index("email_idx", func.lower(t1.c.email), unique=True)
-
-        t2 = Table(
-            "foo",
-            m2,
-            Column("id", Integer, primary_key=True),
-            Column("email", String(50)),
-        )
-        Index("email_idx", func.lower(t2.c.email), unique=True)
-
-        with assertions.expect_warnings(*self._functional_index_warn()):
-            diffs = self._fixture(m1, m2)
-        eq_(diffs, [])
-
-    def test_functional_ix_two(self):
-        m1 = MetaData()
-        m2 = MetaData()
-
-        t1 = Table(
-            "foo",
-            m1,
-            Column("id", Integer, primary_key=True),
-            Column("email", String(50)),
-            Column("name", String(50)),
-        )
-        Index(
-            "email_idx",
-            func.coalesce(t1.c.email, t1.c.name).desc(),
-            unique=True,
-        )
-
-        t2 = Table(
-            "foo",
-            m2,
-            Column("id", Integer, primary_key=True),
-            Column("email", String(50)),
-            Column("name", String(50)),
-        )
-        Index(
-            "email_idx",
-            func.coalesce(t2.c.email, t2.c.name).desc(),
-            unique=True,
-        )
-
-        with assertions.expect_warnings(*self._functional_index_warn()):
-            diffs = self._fixture(m1, m2)
-        eq_(diffs, [])

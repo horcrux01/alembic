@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from typing import Any
-from typing import Callable
 from typing import ContextManager
 from typing import Dict
 from typing import List
+from typing import Literal
 from typing import Optional
+from typing import overload
 from typing import TextIO
 from typing import Tuple
 from typing import TYPE_CHECKING
@@ -15,17 +16,22 @@ from typing import Union
 
 if TYPE_CHECKING:
     from sqlalchemy.engine.base import Connection
+    from sqlalchemy.engine.url import URL
     from sqlalchemy.sql.elements import ClauseElement
     from sqlalchemy.sql.schema import MetaData
 
     from .config import Config
+    from .runtime.environment import IncludeNameFn
+    from .runtime.environment import IncludeObjectFn
+    from .runtime.environment import OnVersionApplyFn
+    from .runtime.environment import ProcessRevisionDirectiveFn
+    from .runtime.environment import RenderItemFn
     from .runtime.migration import _ProxyTransaction
     from .runtime.migration import MigrationContext
     from .script import ScriptDirectory
-
 ### end imports ###
 
-def begin_transaction() -> Union["_ProxyTransaction", ContextManager]:
+def begin_transaction() -> Union[_ProxyTransaction, ContextManager[None]]:
     """Return a context manager that will
     enclose an operation within a "transaction",
     as defined by the environment's offline
@@ -73,31 +79,31 @@ config: Config
 
 def configure(
     connection: Optional[Connection] = None,
-    url: Optional[str] = None,
+    url: Optional[Union[str, URL]] = None,
     dialect_name: Optional[str] = None,
-    dialect_opts: Optional[dict] = None,
+    dialect_opts: Optional[Dict[str, Any]] = None,
     transactional_ddl: Optional[bool] = None,
     transaction_per_migration: bool = False,
     output_buffer: Optional[TextIO] = None,
     starting_rev: Optional[str] = None,
     tag: Optional[str] = None,
-    template_args: Optional[dict] = None,
+    template_args: Optional[Dict[str, Any]] = None,
     render_as_batch: bool = False,
     target_metadata: Optional[MetaData] = None,
-    include_name: Optional[Callable] = None,
-    include_object: Optional[Callable] = None,
+    include_name: Optional[IncludeNameFn] = None,
+    include_object: Optional[IncludeObjectFn] = None,
     include_schemas: bool = False,
-    process_revision_directives: Optional[Callable] = None,
+    process_revision_directives: Optional[ProcessRevisionDirectiveFn] = None,
     compare_type: bool = False,
     compare_server_default: bool = False,
-    render_item: Optional[Callable] = None,
+    render_item: Optional[RenderItemFn] = None,
     literal_binds: bool = False,
     upgrade_token: str = "upgrades",
     downgrade_token: str = "downgrades",
     alembic_module_prefix: str = "op.",
     sqlalchemy_module_prefix: str = "sa.",
     user_module_prefix: Optional[str] = None,
-    on_version_apply: Optional[Callable] = None,
+    on_version_apply: Optional[OnVersionApplyFn] = None,
     **kw: Any,
 ) -> None:
     """Configure a :class:`.MigrationContext` within this
@@ -301,7 +307,8 @@ def configure(
        ``"unique_constraint"``, or ``"foreign_key_constraint"``
      * ``parent_names``: a dictionary of "parent" object names, that are
        relative to the name being given.  Keys in this dictionary may
-       include:  ``"schema_name"``, ``"table_name"``.
+       include:  ``"schema_name"``, ``"table_name"`` or
+       ``"schema_qualified_table_name"``.
 
      E.g.::
 
@@ -640,8 +647,13 @@ def get_tag_argument() -> Optional[str]:
 
     """
 
+@overload
+def get_x_argument(as_dictionary: Literal[False]) -> List[str]: ...
+@overload
+def get_x_argument(as_dictionary: Literal[True]) -> Dict[str, str]: ...
+@overload
 def get_x_argument(
-    as_dictionary: bool = False,
+    as_dictionary: bool = ...,
 ) -> Union[List[str], Dict[str, str]]:
     """Return the value(s) passed for the ``-x`` argument, if any.
 

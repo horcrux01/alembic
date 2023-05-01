@@ -25,6 +25,7 @@ from ..util import sqla_compat
 from ..util.compat import formatannotation_fwdref
 from ..util.compat import inspect_formatargspec
 from ..util.compat import inspect_getfullargspec
+from ..util.sqla_compat import _literal_bindparam
 
 
 NoneType = type(None)
@@ -32,14 +33,14 @@ NoneType = type(None)
 if TYPE_CHECKING:
     from typing import Literal
 
-    from sqlalchemy import Table  # noqa
+    from sqlalchemy import Table
     from sqlalchemy.engine import Connection
+    from sqlalchemy.types import TypeEngine
 
     from .batch import BatchOperationsImpl
     from .ops import MigrateOperation
     from ..ddl import DefaultImpl
     from ..runtime.migration import MigrationContext
-    from ..util.sqla_compat import _literal_bindparam
 
 __all__ = ("Operations", "BatchOperations")
 
@@ -75,13 +76,13 @@ class Operations(util.ModuleClsProxy):
 
     """
 
-    impl: Union["DefaultImpl", "BatchOperationsImpl"]
+    impl: Union[DefaultImpl, BatchOperationsImpl]
     _to_impl = util.Dispatcher()
 
     def __init__(
         self,
-        migration_context: "MigrationContext",
-        impl: Optional["BatchOperationsImpl"] = None,
+        migration_context: MigrationContext,
+        impl: Optional[BatchOperationsImpl] = None,
     ) -> None:
         """Construct a new :class:`.Operations`
 
@@ -100,7 +101,7 @@ class Operations(util.ModuleClsProxy):
     @classmethod
     def register_operation(
         cls, name: str, sourcename: Optional[str] = None
-    ) -> Callable:
+    ) -> Callable[..., Any]:
         """Register a new operation for this class.
 
         This method is normally used to add new operations
@@ -188,7 +189,7 @@ class Operations(util.ModuleClsProxy):
         return register
 
     @classmethod
-    def implementation_for(cls, op_cls: Any) -> Callable:
+    def implementation_for(cls, op_cls: Any) -> Callable[..., Any]:
         """Register an implementation for a given :class:`.MigrateOperation`.
 
         This is part of the operation extensibility API.
@@ -208,8 +209,8 @@ class Operations(util.ModuleClsProxy):
     @classmethod
     @contextmanager
     def context(
-        cls, migration_context: "MigrationContext"
-    ) -> Iterator["Operations"]:
+        cls, migration_context: MigrationContext
+    ) -> Iterator[Operations]:
         op = Operations(migration_context)
         op._install_proxy()
         yield op
@@ -222,13 +223,13 @@ class Operations(util.ModuleClsProxy):
         schema: Optional[str] = None,
         recreate: Literal["auto", "always", "never"] = "auto",
         partial_reordering: Optional[tuple] = None,
-        copy_from: Optional["Table"] = None,
+        copy_from: Optional[Table] = None,
         table_args: Tuple[Any, ...] = (),
         table_kwargs: Mapping[str, Any] = util.immutabledict(),
         reflect_args: Tuple[Any, ...] = (),
         reflect_kwargs: Mapping[str, Any] = util.immutabledict(),
         naming_convention: Optional[Dict[str, str]] = None,
-    ) -> Iterator["BatchOperations"]:
+    ) -> Iterator[BatchOperations]:
         """Invoke a series of per-table migrations in batch.
 
         Batch mode allows a series of operations specific to a table
@@ -259,8 +260,8 @@ class Operations(util.ModuleClsProxy):
         are omitted.  E.g.::
 
             with op.batch_alter_table("some_table") as batch_op:
-                batch_op.add_column(Column('foo', Integer))
-                batch_op.drop_column('bar')
+                batch_op.add_column(Column("foo", Integer))
+                batch_op.drop_column("bar")
 
         The operations within the context manager are invoked at once
         when the context is ended.   When run against SQLite, if the
@@ -339,16 +340,18 @@ class Operations(util.ModuleClsProxy):
          Specify the order of all columns::
 
             with op.batch_alter_table(
-                    "some_table", recreate="always",
-                    partial_reordering=[("c", "d", "a", "b")]
+                "some_table",
+                recreate="always",
+                partial_reordering=[("c", "d", "a", "b")],
             ) as batch_op:
                 pass
 
          Ensure "d" appears before "c", and "b", appears before "a"::
 
             with op.batch_alter_table(
-                    "some_table", recreate="always",
-                    partial_reordering=[("d", "c"), ("b", "a")]
+                "some_table",
+                recreate="always",
+                partial_reordering=[("d", "c"), ("b", "a")],
             ) as batch_op:
                 pass
 
@@ -382,7 +385,7 @@ class Operations(util.ModuleClsProxy):
         yield batch_op
         impl.flush()
 
-    def get_context(self):
+    def get_context(self) -> MigrationContext:
         """Return the :class:`.MigrationContext` object that's
         currently in use.
 
@@ -390,7 +393,7 @@ class Operations(util.ModuleClsProxy):
 
         return self.migration_context
 
-    def invoke(self, operation: "MigrateOperation") -> Any:
+    def invoke(self, operation: MigrateOperation) -> Any:
         """Given a :class:`.MigrateOperation`, invoke it in terms of
         this :class:`.Operations` instance.
 
@@ -400,7 +403,7 @@ class Operations(util.ModuleClsProxy):
         )
         return fn(self, operation)
 
-    def f(self, name: str) -> "conv":
+    def f(self, name: str) -> conv:
         """Indicate a string name that has already had a naming convention
         applied to it.
 
@@ -414,7 +417,7 @@ class Operations(util.ModuleClsProxy):
         If the :meth:`.Operations.f` is used on a constraint, the naming
         convention will not take effect::
 
-            op.add_column('t', 'x', Boolean(name=op.f('ck_bool_t_x')))
+            op.add_column("t", "x", Boolean(name=op.f("ck_bool_t_x")))
 
         Above, the CHECK constraint generated will have the name
         ``ck_bool_t_x`` regardless of whether or not a naming convention is
@@ -426,7 +429,7 @@ class Operations(util.ModuleClsProxy):
         ``{"ck": "ck_bool_%(table_name)s_%(constraint_name)s"}``, then the
         output of the following:
 
-            op.add_column('t', 'x', Boolean(name='x'))
+            op.add_column("t", "x", Boolean(name="x"))
 
         will be::
 
@@ -439,8 +442,8 @@ class Operations(util.ModuleClsProxy):
         return conv(name)
 
     def inline_literal(
-        self, value: Union[str, int], type_: None = None
-    ) -> "_literal_bindparam":
+        self, value: Union[str, int], type_: Optional[TypeEngine[Any]] = None
+    ) -> _literal_bindparam:
         r"""Produce an 'inline literal' expression, suitable for
         using in an INSERT, UPDATE, or DELETE statement.
 
@@ -484,7 +487,7 @@ class Operations(util.ModuleClsProxy):
         """
         return sqla_compat._literal_bindparam(None, value, type_=type_)
 
-    def get_bind(self) -> "Connection":
+    def get_bind(self) -> Connection:
         """Return the current 'bind'.
 
         Under normal circumstances, this is the
@@ -514,7 +517,7 @@ class BatchOperations(Operations):
 
     """
 
-    impl: "BatchOperationsImpl"
+    impl: BatchOperationsImpl
 
     def _noop(self, operation):
         raise NotImplementedError(

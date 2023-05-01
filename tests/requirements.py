@@ -138,7 +138,13 @@ class DefaultRequirements(SuiteRequirements):
     def reflects_indexes_w_sorting(self):
         # TODO: figure out what's happening on the SQLAlchemy side
         # when we reflect an index that has asc() / desc() on the column
+        # Tracked by https://github.com/sqlalchemy/sqlalchemy/issues/9597
         return exclusions.fails_on(["oracle"])
+
+    @property
+    def reflects_indexes_column_sorting(self):
+        "Actually reflect column_sorting on the indexes"
+        return exclusions.only_on(["postgresql"])
 
     @property
     def long_names(self):
@@ -402,7 +408,7 @@ class DefaultRequirements(SuiteRequirements):
             requirements, "black and zimports are required for this test"
         )
         version = exclusions.only_if(
-            lambda _: compat.py39, "python 3.9 is required"
+            lambda _: compat.py311, "python 3.11 is required"
         )
 
         sqlalchemy = exclusions.only_if(
@@ -410,3 +416,17 @@ class DefaultRequirements(SuiteRequirements):
         )
 
         return imports + version + sqlalchemy
+
+    @property
+    def reflect_indexes_with_expressions(self):
+        sqlalchemy = exclusions.only_if(
+            lambda _: sqla_compat.sqla_2, "sqlalchemy 2 is required"
+        )
+
+        postgresql = exclusions.only_on(["postgresql"])
+
+        return sqlalchemy + postgresql
+
+    @property
+    def indexes_with_expressions(self):
+        return exclusions.only_on(["postgresql", "sqlite>=3.9.0"])

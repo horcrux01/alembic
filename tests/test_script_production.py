@@ -1,10 +1,14 @@
 import datetime
 import os
 import re
+from unittest.mock import patch
 
 from dateutil import tz
 import sqlalchemy as sa
+from sqlalchemy import Column
 from sqlalchemy import inspect
+from sqlalchemy import MetaData
+from sqlalchemy import Table
 
 from alembic import autogenerate
 from alembic import command
@@ -36,10 +40,6 @@ from alembic.testing.env import write_script
 from alembic.testing.fixtures import TestBase
 from alembic.util import CommandError
 
-try:
-    from unittest.mock import patch
-except ImportError:
-    from mock import patch  # noqa
 env, abc, def_ = None, None, None
 
 
@@ -62,7 +62,7 @@ class GeneralOrderedTests(TestBase):
         self._test_008_long_name_configurable()
 
     def _test_001_environment(self):
-        assert_set = set(["env.py", "script.py.mako", "README"])
+        assert_set = {"env.py", "script.py.mako", "README"}
         eq_(assert_set.intersection(os.listdir(env.dir)), assert_set)
 
     def _test_002_rev_ids(self):
@@ -101,7 +101,7 @@ class GeneralOrderedTests(TestBase):
         )
         eq_(script.revision, def_)
         eq_(script.down_revision, abc)
-        eq_(env.get_revision(abc).nextrev, set([def_]))
+        eq_(env.get_revision(abc).nextrev, {def_})
         assert script.module.down_revision == abc
         assert callable(script.module.upgrade)
         assert callable(script.module.downgrade)
@@ -115,7 +115,7 @@ class GeneralOrderedTests(TestBase):
         env = staging_env(create=False)
         abc_rev = env.get_revision(abc)
         def_rev = env.get_revision(def_)
-        eq_(abc_rev.nextrev, set([def_]))
+        eq_(abc_rev.nextrev, {def_})
         eq_(abc_rev.revision, abc)
         eq_(def_rev.down_revision, abc)
         eq_(env.get_heads(), [def_])
@@ -319,7 +319,7 @@ class RevisionCommandTest(TestBase):
         rev = script.get_revision(rev.revision)
         eq_(rev.down_revision, self.b)
         assert "some message" in rev.doc
-        eq_(set(script.get_heads()), set([rev.revision, self.c]))
+        eq_(set(script.get_heads()), {rev.revision, self.c})
 
     def test_create_script_missing_splice(self):
         assert_raises_message(
@@ -710,7 +710,7 @@ class ImportsTest(TestBase):
                 context.configure(
                     connection=connection,
                     target_metadata=target_metadata,
-                    **kw
+                    **kw,
                 )
                 with context.begin_transaction():
                     context.run_migrations()
@@ -720,7 +720,6 @@ class ImportsTest(TestBase):
         )
 
     def test_imports_in_script(self):
-        from sqlalchemy import MetaData, Table, Column
         from sqlalchemy.dialects.mysql import VARCHAR
 
         type_ = VARCHAR(20, charset="utf8", national=True)

@@ -4,8 +4,286 @@ Changelog
 ==========
 
 .. changelog::
-    :version: 1.8.2
+    :version: 1.10.5
     :include_notes_from: unreleased
+
+.. changelog::
+    :version: 1.10.4
+    :released: April 24, 2023
+
+    .. change::
+        :tags: postgresql, autogenerate, feature
+        :tickets: 1213
+
+        Added support for autogenerate comparison of indexes on PostgreSQL which
+        include SQL sort option, such as ``ASC`` or ``NULLS FIRST``.
+
+    .. change::
+        :tags: bug, operations
+        :tickets: 1215
+
+        Fixed issue where using a directive such as ``op.create_foreign_key()`` to
+        create a self-referential constraint on a single table where the same
+        column were present on both sides (e.g. within a composite foreign key)
+        would produce an error under SQLAlchemy 2.0 and a warning under SQLAlchemy
+        1.4 indicating that a duplicate column were being added to a table.
+
+.. changelog::
+    :version: 1.10.3
+    :released: April 5, 2023
+
+    .. change::
+        :tags: bug, typing
+        :tickets: 1191, 1201
+
+        Fixed various typing issues observed with pyright, including issues
+        involving the combination of :class:`.Function` and
+        :meth:`.MigrationContext.begin_transaction`.
+
+    .. change::
+        :tags: bug, autogenerate
+        :tickets: 1212
+
+        Fixed error raised by alembic when running autogenerate after removing
+        a function based index.
+
+.. changelog::
+    :version: 1.10.2
+    :released: March 8, 2023
+
+    .. change::
+        :tags: bug, ops
+        :tickets: 1196
+
+        Fixed regression where Alembic would not run with older SQLAlchemy 1.3
+        versions prior to 1.3.24 due to a missing symbol. Workarounds have been
+        applied for older 1.3 versions.
+
+.. changelog::
+    :version: 1.10.1
+    :released: March 6, 2023
+
+    .. change::
+        :tags: bug, postgresql
+        :tickets: 1184
+
+        Fixed issue regarding PostgreSQL :class:`.ExcludeConstraint`, where
+        constraint elements which made use of :func:`.literal_column` could not be
+        rendered for autogenerate. Additionally, using SQLAlchemy 2.0.5 or greater,
+        :func:`.text()` constructs are also supported within PostgreSQL
+        :class:`.ExcludeConstraint` objects for autogenerate render. Pull request
+        courtesy Jan Katins.
+
+    .. change::
+        :tags: bug, batch, regression
+        :tickets: 1195
+
+        Fixed regression for 1.10.0 where :class:`.Constraint` objects were
+        suddenly required to have non-None name fields when using batch mode, which
+        was not previously a requirement.
+
+.. changelog::
+    :version: 1.10.0
+    :released: March 5, 2023
+
+    .. change::
+        :tags: bug, autogenerate
+        :tickets: 1166
+
+        Fixed issue in index detection where autogenerate change detection would
+        consider indexes with the same columns but with different order as equal,
+        while in general they are not equivalent in how a database will use them.
+
+    .. change::
+        :tags: feature, revisioning
+        :tickets: 760
+
+        Recursive traversal of revision files in a particular revision directory is
+        now supported, by indicating ``recursive_version_locations = true`` in
+        alembic.ini. Pull request courtesy ostr00000.
+
+
+    .. change::
+        :tags: bug, autogenerate, sqlite
+        :tickets: 1165
+
+        Fixed issue where indexes on SQLite which include SQL expressions would not
+        compare correctly, generating false positives under autogenerate. These
+        indexes are now skipped, generating a warning, in the same way that
+        expression-based indexes on PostgreSQL are skipped and generate warnings
+        when SQLAlchemy 1.x installations are in use. Note that reflection of
+        SQLite expression-based indexes continues to not yet be supported under
+        SQLAlchemy 2.0, even though PostgreSQL expression-based indexes have now
+        been implemented.
+
+
+
+    .. change::
+        :tags: bug, mssql
+        :tickets: 1187
+
+        Properly escape constraint name on SQL Server when dropping
+        a column while specifying ``mssql_drop_default=True`` or
+        ``mssql_drop_check=True`` or ``mssql_drop_foreign_key=True``.
+
+
+    .. change::
+        :tags: usecase, autogenerate, postgresql
+
+        Added support for autogenerate comparison of indexes on PostgreSQL which
+        include SQL expressions, when using SQLAlchemy 2.0; the previous warning
+        that such indexes were skipped are removed when the new functionality
+        is in use.  When using SQLAlchemy versions prior to the 2.0 series,
+        the indexes continue to be skipped with a warning.
+
+.. changelog::
+    :version: 1.9.4
+    :released: February 16, 2023
+
+    .. change::
+        :tags: bug, mssql
+        :tickets: 1177
+
+        Ongoing fixes for SQL Server server default comparisons under autogenerate,
+        adjusting for SQL Server's collapsing of whitespace between SQL function
+        arguments when reporting on a function-based server default, as well as its
+        arbitrary addition of parenthesis within arguments; the approach has now
+        been made more aggressive by stripping the two default strings to compare
+        of all whitespace, parenthesis, and quoting characters.
+
+
+    .. change::
+        :tags: bug, postgresql
+
+        Fixed PostgreSQL server default comparison to handle SQL expressions
+        sent as ``text()`` constructs, such as ``text("substring('name', 1, 3)")``,
+        which previously would raise errors when attempting to run a server-based
+        comparison.
+
+
+
+    .. change::
+        :tags: bug, autogenerate
+        :tickets: 1180
+
+        Removed a mis-use of the
+        :paramref:`.EnvironmentContext.configure.render_item` callable where the
+        "server_default" renderer would be erroneously used within the server
+        default comparison process, which is working against SQL expressions, not
+        Python code.
+
+    .. change::
+        :tags: bug, commands
+
+        Fixed regression introduced in 1.7.0 where the "config" object passed to
+        the template context when running the :func:`.merge` command
+        programmatically failed to be correctly populated. Pull request courtesy
+        Brendan Gann.
+
+.. changelog::
+    :version: 1.9.3
+    :released: February 7, 2023
+
+    .. change::
+        :tags: bug, autogenerate
+        :tickets: 1167
+
+        Fixed issue where rendering of user-defined types that then went onto use
+        the ``.with_variant()`` method would fail to render, if using SQLAlchemy
+        2.0's version of variants.
+
+
+.. changelog::
+    :version: 1.9.2
+    :released: January 14, 2023
+
+    .. change::
+        :tags: bug, typing
+        :tickets: 1146, 1147
+
+        Fixed typing definitions for :meth:`.EnvironmentContext.get_x_argument`.
+
+        Typing stubs are now generated for overloaded proxied methods such as
+        :meth:`.EnvironmentContext.get_x_argument`.
+
+    .. change::
+        :tags: bug, autogenerate
+        :tickets: 1152
+
+        Fixed regression caused by :ticket:`1145` where the string transformations
+        applied to server defaults caused expressions such as ``(getdate())`` to no
+        longer compare as equivalent on SQL Server, others.
+
+.. changelog::
+    :version: 1.9.1
+    :released: December 23, 2022
+
+    .. change::
+        :tags: bug, autogenerate
+        :tickets: 1145
+
+        Fixed issue where server default compare would not work for string defaults
+        that contained backslashes, due to mis-rendering of these values when
+        comparing their contents.
+
+
+    .. change::
+        :tags: bug, oracle
+
+        Implemented basic server default comparison for the Oracle backend;
+        previously, Oracle's formatting of reflected defaults prevented any
+        matches from occurring.
+
+    .. change::
+        :tags: bug, sqlite
+
+        Adjusted SQLite's compare server default implementation to better handle
+        defaults with or without parens around them, from both the reflected and
+        the local metadata side.
+
+    .. change::
+        :tags: bug, mssql
+
+        Adjusted SQL Server's compare server default implementation to better
+        handle defaults with or without parens around them, from both the reflected
+        and the local metadata side.
+
+.. changelog::
+    :version: 1.9.0
+    :released: December 15, 2022
+
+    .. change::
+        :tags: feature, commands
+        :tickets: 724
+
+        Added new Alembic command ``alembic check``. This performs the widely
+        requested feature of running an "autogenerate" comparison between the
+        current database and the :class:`.MetaData` that's currently set up for
+        autogenerate, returning an error code if the two do not match, based on
+        current autogenerate settings. Pull request courtesy Nathan Louie.
+
+        .. seealso::
+
+            :ref:`alembic_check`
+
+
+    .. change::
+        :tags: bug, tests
+
+        Fixed issue in tox.ini file where changes in the tox 4.0 series to the
+        format of "passenv" caused tox to not function correctly, in particular
+        raising an error as of tox 4.0.6.
+
+    .. change::
+        :tags: bug, typing
+        :tickets: 1110
+
+        Fixed typing issue where :paramref:`.revision.process_revision_directives`
+        was not fully typed; additionally ensured all ``Callable`` and ``Dict``
+        arguments to :meth:`.EnvironmentContext.configure` include parameters in
+        the typing declaration.
+
+        Additionally updated the codebase for Mypy 0.990 compliance.
 
 .. changelog::
     :version: 1.8.1

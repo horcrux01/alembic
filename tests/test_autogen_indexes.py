@@ -1,6 +1,11 @@
+from contextlib import nullcontext
+import itertools
+
 from sqlalchemy import Column
+from sqlalchemy import Float
 from sqlalchemy import ForeignKey
 from sqlalchemy import ForeignKeyConstraint
+from sqlalchemy import func
 from sqlalchemy import Index
 from sqlalchemy import Integer
 from sqlalchemy import MetaData
@@ -9,16 +14,23 @@ from sqlalchemy import PrimaryKeyConstraint
 from sqlalchemy import String
 from sqlalchemy import Table
 from sqlalchemy import UniqueConstraint
+from sqlalchemy.dialects.postgresql import DOUBLE_PRECISION
+from sqlalchemy.sql.expression import asc
 from sqlalchemy.sql.expression import column
 from sqlalchemy.sql.expression import desc
+from sqlalchemy.sql.expression import nullsfirst
+from sqlalchemy.sql.expression import nullslast
 
+from alembic import testing
 from alembic.testing import combinations
 from alembic.testing import config
 from alembic.testing import eq_
 from alembic.testing import exclusions
+from alembic.testing import resolve_lambda
 from alembic.testing import schemacompare
 from alembic.testing import TestBase
 from alembic.testing import util
+from alembic.testing.assertions import expect_warnings
 from alembic.testing.env import staging_env
 from alembic.testing.suite._autogen_fixtures import AutogenFixtureTest
 from alembic.util import sqla_compat
@@ -552,7 +564,7 @@ class AutogenerateUniqueIndexTest(AutogenFixtureTest, TestBase):
 
         diffs = self._fixture(m1, m2)
 
-        diffs = set(
+        diffs = {
             (
                 cmd,
                 isinstance(obj, (UniqueConstraint, Index))
@@ -560,23 +572,21 @@ class AutogenerateUniqueIndexTest(AutogenFixtureTest, TestBase):
                 else False,
             )
             for cmd, obj in diffs
-        )
+        }
 
         if self.reports_unnamed_constraints:
             if self.reports_unique_constraints_as_indexes:
                 eq_(
                     diffs,
-                    set([("remove_index", True), ("add_constraint", False)]),
+                    {("remove_index", True), ("add_constraint", False)},
                 )
             else:
                 eq_(
                     diffs,
-                    set(
-                        [
-                            ("remove_constraint", True),
-                            ("add_constraint", False),
-                        ]
-                    ),
+                    {
+                        ("remove_constraint", True),
+                        ("add_constraint", False),
+                    },
                 )
 
     def test_remove_named_unique_index(self):
@@ -594,8 +604,8 @@ class AutogenerateUniqueIndexTest(AutogenFixtureTest, TestBase):
         diffs = self._fixture(m1, m2)
 
         if self.reports_unique_constraints:
-            diffs = set((cmd, obj.name) for cmd, obj in diffs)
-            eq_(diffs, set([("remove_index", "xidx")]))
+            diffs = {(cmd, obj.name) for cmd, obj in diffs}
+            eq_(diffs, {("remove_index", "xidx")})
         else:
             eq_(diffs, [])
 
@@ -614,11 +624,11 @@ class AutogenerateUniqueIndexTest(AutogenFixtureTest, TestBase):
         diffs = self._fixture(m1, m2)
 
         if self.reports_unique_constraints:
-            diffs = set((cmd, obj.name) for cmd, obj in diffs)
+            diffs = {(cmd, obj.name) for cmd, obj in diffs}
             if self.reports_unique_constraints_as_indexes:
-                eq_(diffs, set([("remove_index", "xidx")]))
+                eq_(diffs, {("remove_index", "xidx")})
             else:
-                eq_(diffs, set([("remove_constraint", "xidx")]))
+                eq_(diffs, {("remove_constraint", "xidx")})
         else:
             eq_(diffs, [])
 
@@ -668,9 +678,9 @@ class AutogenerateUniqueIndexTest(AutogenFixtureTest, TestBase):
 
         eq_(diffs[0][0], "add_table")
         eq_(len(diffs), 2)
-        assert UniqueConstraint not in set(
+        assert UniqueConstraint not in {
             type(c) for c in diffs[0][1].constraints
-        )
+        }
 
         eq_(diffs[1][0], "add_index")
         d_table = diffs[0][1]
@@ -1071,9 +1081,7 @@ class AutogenerateIndexTest(AutogenFixtureTest, TestBase):
         eq_(diffs[1][0], "remove_index")
         eq_(diffs[2][0], "remove_table")
 
-        eq_(
-            set([diffs[0][1].name, diffs[1][1].name]), set(["xy_idx", "y_idx"])
-        )
+        eq_({diffs[0][1].name, diffs[1][1].name}, {"xy_idx", "y_idx"})
 
     def test_add_ix_on_table_create(self):
         m1 = MetaData()
@@ -1083,9 +1091,9 @@ class AutogenerateIndexTest(AutogenFixtureTest, TestBase):
 
         eq_(diffs[0][0], "add_table")
         eq_(len(diffs), 2)
-        assert UniqueConstraint not in set(
+        assert UniqueConstraint not in {
             type(c) for c in diffs[0][1].constraints
-        )
+        }
         eq_(diffs[1][0], "add_index")
         eq_(diffs[1][1].unique, False)
 
@@ -1124,11 +1132,6 @@ class AutogenerateIndexTest(AutogenFixtureTest, TestBase):
         diffs = self._fixture(m1, m2)
 
         eq_(diffs, [])
-
-    # fails in the 0.8 series where we have truncation rules,
-    # but no control over quoting. passes in 0.7.9 where we don't have
-    # truncation rules either.    dropping these ancient versions
-    # is long overdue.
 
     def test_unchanged_case_sensitive_implicit_idx(self):
         m1 = MetaData()
@@ -1178,6 +1181,419 @@ class AutogenerateIndexTest(AutogenFixtureTest, TestBase):
         )
         diffs = self._fixture(m1, m2)
         eq_(diffs, [])
+
+    def test_column_order_changed(self):
+        m1 = MetaData()
+        m2 = MetaData()
+
+        old = Index("SomeIndex", "x", "y")
+        Table(
+            "order_change",
+            m1,
+            Column("id", Integer, primary_key=True),
+            Column("x", Integer),
+            Column("y", Integer),
+            old,
+        )
+
+        new = Index("SomeIndex", "y", "x")
+        Table(
+            "order_change",
+            m2,
+            Column("id", Integer, primary_key=True),
+            Column("x", Integer),
+            Column("y", Integer),
+            new,
+        )
+        diffs = self._fixture(m1, m2)
+        eq_(
+            diffs,
+            [
+                ("remove_index", schemacompare.CompareIndex(old)),
+                ("add_index", schemacompare.CompareIndex(new)),
+            ],
+        )
+
+    @config.requirements.reflects_indexes_column_sorting
+    @testing.combinations(
+        (desc, asc),
+        (asc, desc),
+        (desc, lambda x: nullslast(desc(x))),
+        (nullslast, nullsfirst),
+        (nullsfirst, nullslast),
+        (lambda x: nullslast(desc(x)), lambda x: nullsfirst(asc(x))),
+    )
+    def test_column_sort_changed(self, old_fn, new_fn):
+        m1 = MetaData()
+        m2 = MetaData()
+
+        old = Index("SomeIndex", old_fn("y"))
+        Table("order_change", m1, Column("y", Integer), old)
+
+        new = Index("SomeIndex", new_fn("y"))
+        Table("order_change", m2, Column("y", Integer), new)
+        diffs = self._fixture(m1, m2)
+        eq_(
+            diffs,
+            [
+                (
+                    "remove_index",
+                    schemacompare.CompareIndex(old, name_only=True),
+                ),
+                ("add_index", schemacompare.CompareIndex(new, name_only=True)),
+            ],
+        )
+
+    @config.requirements.reflects_indexes_column_sorting
+    @testing.combinations(
+        (asc, asc),
+        (desc, desc),
+        (nullslast, nullslast),
+        (nullsfirst, nullsfirst),
+        (lambda x: x, asc),
+        (lambda x: x, nullslast),
+        (desc, lambda x: nullsfirst(desc(x))),
+        (lambda x: nullslast(asc(x)), lambda x: x),
+    )
+    def test_column_sort_not_changed(self, old_fn, new_fn):
+        m1 = MetaData()
+        m2 = MetaData()
+
+        old = Index("SomeIndex", old_fn("y"))
+        Table("order_change", m1, Column("y", Integer), old)
+
+        new = Index("SomeIndex", new_fn("y"))
+        Table("order_change", m2, Column("y", Integer), new)
+        diffs = self._fixture(m1, m2)
+        eq_(diffs, [])
+
+
+def _lots_of_indexes(flatten: bool = False):
+    diff_pairs = [
+        (
+            lambda t: Index("SomeIndex", "y", func.lower(t.c.x)),
+            lambda t: Index("SomeIndex", func.lower(t.c.x)),
+        ),
+        (
+            lambda CapT: Index("SomeIndex", "y", func.lower(CapT.c.XCol)),
+            lambda CapT: Index("SomeIndex", func.lower(CapT.c.XCol)),
+        ),
+        (
+            lambda t: Index(
+                "SomeIndex", "y", func.lower(column("x")), _table=t
+            ),
+            lambda t: Index("SomeIndex", func.lower(column("x")), _table=t),
+        ),
+        (
+            lambda t: Index("SomeIndex", t.c.y, func.lower(t.c.x)),
+            lambda t: Index("SomeIndex", func.lower(t.c.x), t.c.y),
+        ),
+        (
+            lambda t: Index("SomeIndex", t.c.y, func.lower(t.c.x)),
+            lambda t: Index("SomeIndex", t.c.y, func.lower(t.c.q)),
+        ),
+        (
+            lambda t: Index("SomeIndex", t.c.z, func.lower(t.c.x)),
+            lambda t: Index("SomeIndex", t.c.y, func.lower(t.c.x)),
+        ),
+        (
+            lambda t: Index("SomeIndex", func.lower(t.c.x)),
+            lambda t: Index("SomeIndex", t.c.y, func.lower(t.c.x)),
+        ),
+        (
+            lambda t: Index("SomeIndex", t.c.y, func.upper(t.c.x)),
+            lambda t: Index("SomeIndex", t.c.y, func.lower(t.c.x)),
+        ),
+        (
+            lambda t: Index("SomeIndex", t.c.y, t.c.ff + 1),
+            lambda t: Index("SomeIndex", t.c.y, t.c.ff + 3),
+        ),
+        (
+            lambda t: Index("SomeIndex", t.c.y, func.lower(t.c.x)),
+            lambda t: Index("SomeIndex", t.c.y, func.lower(t.c.x + t.c.q)),
+        ),
+        (
+            lambda t: Index("SomeIndex", t.c.y, t.c.z + 3),
+            lambda t: Index("SomeIndex", t.c.y, t.c.z * 3),
+        ),
+        (
+            lambda t: Index("SomeIndex", func.lower(t.c.x), t.c.q + "42"),
+            lambda t: Index("SomeIndex", func.lower(t.c.q), t.c.x + "42"),
+        ),
+        (
+            lambda t: Index("SomeIndex", func.lower(t.c.x), t.c.z + 42),
+            lambda t: Index("SomeIndex", t.c.z + 42, func.lower(t.c.q)),
+        ),
+        (
+            lambda t: Index("SomeIndex", t.c.ff + 42),
+            lambda t: Index("SomeIndex", 42 + t.c.ff),
+        ),
+    ]
+
+    with_sort = [
+        (
+            lambda t: Index("SomeIndex", "y", func.lower(t.c.x)),
+            lambda t: Index("SomeIndex", "y", desc(func.lower(t.c.x))),
+        ),
+        (
+            lambda t: Index("SomeIndex", "y", func.lower(t.c.x)),
+            lambda t: Index("SomeIndex", desc("y"), func.lower(t.c.x)),
+        ),
+        (
+            lambda t: Index("SomeIndex", "y", func.lower(t.c.x)),
+            lambda t: Index("SomeIndex", "y", nullsfirst(func.lower(t.c.x))),
+        ),
+        (
+            lambda t: Index("SomeIndex", "y", func.lower(t.c.x)),
+            lambda t: Index("SomeIndex", nullsfirst("y"), func.lower(t.c.x)),
+        ),
+        (
+            lambda t: Index("SomeIndex", asc(func.lower(t.c.x))),
+            lambda t: Index("SomeIndex", desc(func.lower(t.c.x))),
+        ),
+        (
+            lambda t: Index("SomeIndex", desc(func.lower(t.c.x))),
+            lambda t: Index("SomeIndex", asc(func.lower(t.c.x))),
+        ),
+        (
+            lambda t: Index("SomeIndex", nullslast(asc(func.lower(t.c.x)))),
+            lambda t: Index("SomeIndex", nullslast(desc(func.lower(t.c.x)))),
+        ),
+        (
+            lambda t: Index("SomeIndex", nullslast(desc(func.lower(t.c.x)))),
+            lambda t: Index("SomeIndex", nullsfirst(desc(func.lower(t.c.x)))),
+        ),
+        (
+            lambda t: Index("SomeIndex", nullsfirst(func.lower(t.c.x))),
+            lambda t: Index("SomeIndex", desc(func.lower(t.c.x))),
+        ),
+    ]
+
+    req = config.requirements.reflects_indexes_column_sorting
+
+    if flatten:
+
+        flat = list(itertools.chain.from_iterable(diff_pairs))
+        for f1, f2 in with_sort:
+            flat.extend([(f1, req), (f2, req)])
+        return flat
+    else:
+        return diff_pairs + [(f1, f2, req) for f1, f2 in with_sort]
+
+
+def _lost_of_equal_indexes(_lots_of_indexes):
+    equal_pairs = [
+        (fn, fn) if not isinstance(fn, tuple) else (fn[0], fn[0], fn[1])
+        for fn in _lots_of_indexes(flatten=True)
+    ]
+    equal_pairs += [
+        (
+            lambda t: Index("SomeIndex", "y", func.lower(t.c.x)),
+            lambda t: Index("SomeIndex", "y", asc(func.lower(t.c.x))),
+            config.requirements.reflects_indexes_column_sorting,
+        ),
+        (
+            lambda t: Index("SomeIndex", "y", func.lower(t.c.x)),
+            lambda t: Index("SomeIndex", "y", nullslast(func.lower(t.c.x))),
+            config.requirements.reflects_indexes_column_sorting,
+        ),
+        (
+            lambda t: Index("SomeIndex", "y", func.lower(t.c.x)),
+            lambda t: Index(
+                "SomeIndex", "y", nullslast(asc(func.lower(t.c.x)))
+            ),
+            config.requirements.reflects_indexes_column_sorting,
+        ),
+        (
+            lambda t: Index("SomeIndex", "y", desc(func.lower(t.c.x))),
+            lambda t: Index(
+                "SomeIndex", "y", nullsfirst(desc(func.lower(t.c.x)))
+            ),
+            config.requirements.reflects_indexes_column_sorting,
+        ),
+    ]
+    return equal_pairs
+
+
+class AutogenerateExpressionIndexTest(AutogenFixtureTest, TestBase):
+    """tests involving indexes with expression"""
+
+    __requires__ = ("indexes_with_expressions",)
+
+    __backend__ = True
+
+    @property
+    def has_reflection(self):
+        return config.requirements.reflect_indexes_with_expressions.enabled
+
+    def test_expression_indexes_add(self):
+        m1 = MetaData()
+        m2 = MetaData()
+
+        Table(
+            "exp_index",
+            m1,
+            Column("id", Integer, primary_key=True),
+            Column("x", Integer),
+            Column("y", Integer),
+        )
+
+        idx = Index("SomeIndex", "y", func.lower(column("x")))  # noqa
+        Table(
+            "exp_index",
+            m2,
+            Column("id", Integer, primary_key=True),
+            Column("x", Integer),
+            Column("y", Integer),
+            idx,
+        )
+
+        if self.has_reflection:
+            diffs = self._fixture(m1, m2)
+            eq_(diffs, [("add_index", schemacompare.CompareIndex(idx))])
+        else:
+            with expect_warnings(
+                r"autogenerate skipping metadata-specified expression-based "
+                r"index 'SomeIndex'; dialect '.*' under SQLAlchemy .* "
+                r"can't reflect these "
+                r"indexes so they can't be compared",
+            ):
+                diffs = self._fixture(m1, m2)
+            eq_(diffs, [])
+
+    @testing.fixture
+    def index_changed_tables(self):
+        m1 = MetaData()
+        m2 = MetaData()
+
+        t_old = Table(
+            "exp_index",
+            m1,
+            Column("id", Integer, primary_key=True),
+            Column("x", String(100)),
+            Column("y", String(100)),
+            Column("q", String(100)),
+            Column("z", Integer),
+            Column("ff", Float().with_variant(DOUBLE_PRECISION, "postgresql")),
+        )
+
+        t_new = Table(
+            "exp_index",
+            m2,
+            Column("id", Integer, primary_key=True),
+            Column("x", String(100)),
+            Column("y", String(100)),
+            Column("q", String(100)),
+            Column("z", Integer),
+            Column("ff", Float().with_variant(DOUBLE_PRECISION, "postgresql")),
+        )
+
+        CapT_old = Table(
+            "CapT table",
+            m1,
+            Column("id", Integer, primary_key=True),
+            Column("XCol", String(100)),
+            Column("y", String(100)),
+        )
+
+        CapT_new = Table(
+            "CapT table",
+            m2,
+            Column("id", Integer, primary_key=True),
+            Column("XCol", String(100)),
+            Column("y", String(100)),
+        )
+
+        return (
+            m1,
+            m2,
+            {"t": t_old, "CapT": CapT_old},
+            {"t": t_new, "CapT": CapT_new},
+        )
+
+    @combinations(*_lots_of_indexes(), argnames="old_fn, new_fn")
+    def test_expression_indexes_changed(
+        self, index_changed_tables, old_fn, new_fn
+    ):
+        m1, m2, old_fixture_tables, new_fixture_tables = index_changed_tables
+
+        old, new = resolve_lambda(
+            old_fn, **old_fixture_tables
+        ), resolve_lambda(new_fn, **new_fixture_tables)
+
+        if self.has_reflection:
+            diffs = self._fixture(m1, m2)
+            eq_(
+                diffs,
+                [
+                    ("remove_index", schemacompare.CompareIndex(old, True)),
+                    ("add_index", schemacompare.CompareIndex(new)),
+                ],
+            )
+        else:
+            with expect_warnings(
+                r"Skipped unsupported reflection of expression-based index "
+                r"SomeIndex",
+                r"autogenerate skipping metadata-specified expression-based "
+                r"index 'SomeIndex'; dialect '.*' under SQLAlchemy .* "
+                r"can't reflect these "
+                r"indexes so they can't be compared",
+            ):
+                diffs = self._fixture(m1, m2)
+            eq_(diffs, [])
+
+    @combinations(
+        *_lost_of_equal_indexes(_lots_of_indexes), argnames="fn1, fn2"
+    )
+    def test_expression_indexes_no_change(
+        self, index_changed_tables, fn1, fn2
+    ):
+        m1, m2, old_fixture_tables, new_fixture_tables = index_changed_tables
+
+        resolve_lambda(fn1, **old_fixture_tables)
+        resolve_lambda(fn2, **new_fixture_tables)
+
+        if self.has_reflection:
+            ctx = nullcontext()
+        else:
+            ctx = expect_warnings()
+
+        with ctx:
+            diffs = self._fixture(m1, m2)
+        eq_(diffs, [])
+
+    def test_expression_indexes_remove(self):
+        m1 = MetaData()
+        m2 = MetaData()
+
+        idx = Index("SomeIndex", "y", func.lower(column("x")))
+        Table(
+            "exp_index",
+            m1,
+            Column("id", Integer, primary_key=True),
+            Column("x", String(100)),
+            Column("y", Integer),
+            idx,
+        )
+
+        Table(
+            "exp_index",
+            m2,
+            Column("id", Integer, primary_key=True),
+            Column("x", String(100)),
+            Column("y", Integer),
+        )
+
+        if self.has_reflection:
+            diffs = self._fixture(m1, m2)
+            eq_(
+                diffs,
+                [("remove_index", schemacompare.CompareIndex(idx, True))],
+            )
+        else:
+            with expect_warnings():
+                diffs = self._fixture(m1, m2)
+            eq_(diffs, [])
 
 
 class NoUqReflectionIndexTest(NoUqReflection, AutogenerateUniqueIndexTest):

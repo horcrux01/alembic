@@ -23,9 +23,12 @@ from sqlalchemy.schema import Column
 from sqlalchemy.schema import ForeignKeyConstraint
 from sqlalchemy.sql import visitors
 from sqlalchemy.sql.elements import BindParameter
+from sqlalchemy.sql.elements import ColumnClause
 from sqlalchemy.sql.elements import quoted_name
 from sqlalchemy.sql.elements import TextClause
+from sqlalchemy.sql.elements import UnaryExpression
 from sqlalchemy.sql.visitors import traverse
+from typing_extensions import TypeGuard
 
 if TYPE_CHECKING:
     from sqlalchemy import Index
@@ -37,7 +40,6 @@ if TYPE_CHECKING:
     from sqlalchemy.sql.base import ColumnCollection
     from sqlalchemy.sql.compiler import SQLCompiler
     from sqlalchemy.sql.dml import Insert
-    from sqlalchemy.sql.elements import ColumnClause
     from sqlalchemy.sql.elements import ColumnElement
     from sqlalchemy.sql.schema import Constraint
     from sqlalchemy.sql.schema import SchemaItem
@@ -60,7 +62,13 @@ _vers = tuple(
 sqla_13 = _vers >= (1, 3)
 sqla_14 = _vers >= (1, 4)
 sqla_14_26 = _vers >= (1, 4, 26)
-sqla_2 = _vers >= (1, 5)
+sqla_2 = _vers >= (2,)
+sqlalchemy_version = __version__
+
+try:
+    from sqlalchemy.sql.naming import _NONE_NAME as _NONE_NAME
+except ImportError:
+    from sqlalchemy.sql.elements import _NONE_NAME as _NONE_NAME  # type: ignore  # noqa: E501
 
 
 if sqla_14:
@@ -103,12 +111,41 @@ else:
     _identity_attrs = _identity_options_attrs + ("on_null",)
     has_identity = True
 
+if sqla_2:
+    from sqlalchemy.sql.base import _NoneName
+else:
+    from sqlalchemy.util import symbol as _NoneName  # type: ignore[assignment]
+
+
+_ConstraintName = Union[None, str, _NoneName]
+
+_ConstraintNameDefined = Union[str, _NoneName]
+
+
+def constraint_name_defined(
+    name: _ConstraintName,
+) -> TypeGuard[_ConstraintNameDefined]:
+    return name is _NONE_NAME or isinstance(name, (str, _NoneName))
+
+
+def constraint_name_string(
+    name: _ConstraintName,
+) -> TypeGuard[str]:
+    return isinstance(name, str)
+
+
+def constraint_name_or_none(
+    name: _ConstraintName,
+) -> Optional[str]:
+    return name if constraint_name_string(name) else None
+
+
 AUTOINCREMENT_DEFAULT = "auto"
 
 
 @contextlib.contextmanager
 def _ensure_scope_for_ddl(
-    connection: Optional["Connection"],
+    connection: Optional[Connection],
 ) -> Iterator[None]:
     try:
         in_transaction = connection.in_transaction  # type: ignore[union-attr]
@@ -129,9 +166,16 @@ def _ensure_scope_for_ddl(
             yield
 
 
+def url_render_as_string(url, hide_password=True):
+    if sqla_14:
+        return url.render_as_string(hide_password=hide_password)
+    else:
+        return url.__to_string__(hide_password=hide_password)
+
+
 def _safe_begin_connection_transaction(
-    connection: "Connection",
-) -> "Transaction":
+    connection: Connection,
+) -> Transaction:
     transaction = _get_connection_transaction(connection)
     if transaction:
         return transaction
@@ -140,7 +184,7 @@ def _safe_begin_connection_transaction(
 
 
 def _safe_commit_connection_transaction(
-    connection: "Connection",
+    connection: Connection,
 ) -> None:
     transaction = _get_connection_transaction(connection)
     if transaction:
@@ -148,14 +192,14 @@ def _safe_commit_connection_transaction(
 
 
 def _safe_rollback_connection_transaction(
-    connection: "Connection",
+    connection: Connection,
 ) -> None:
     transaction = _get_connection_transaction(connection)
     if transaction:
         transaction.rollback()
 
 
-def _get_connection_in_transaction(connection: Optional["Connection"]) -> bool:
+def _get_connection_in_transaction(connection: Optional[Connection]) -> bool:
     try:
         in_transaction = connection.in_transaction  # type: ignore
     except AttributeError:
@@ -177,8 +221,8 @@ def _copy(schema_item: _CE, **kw) -> _CE:
 
 
 def _get_connection_transaction(
-    connection: "Connection",
-) -> Optional["Transaction"]:
+    connection: Connection,
+) -> Optional[Transaction]:
     if sqla_14:
         return connection.get_transaction()
     else:
@@ -194,7 +238,7 @@ def _create_url(*arg, **kw) -> url.URL:
 
 
 def _connectable_has_table(
-    connectable: "Connection", tablename: str, schemaname: Union[str, None]
+    connectable: Connection, tablename: str, schemaname: Union[str, None]
 ) -> bool:
     if sqla_14:
         return inspect(connectable).has_table(tablename, schemaname)
@@ -237,7 +281,7 @@ def _server_default_is_identity(*server_default) -> bool:
         return any(isinstance(sd, Identity) for sd in server_default)
 
 
-def _table_for_constraint(constraint: "Constraint") -> "Table":
+def _table_for_constraint(constraint: Constraint) -> Table:
     if isinstance(constraint, ForeignKeyConstraint):
         table = constraint.parent
         assert table is not None
@@ -255,9 +299,7 @@ def _columns_for_constraint(constraint):
         return list(constraint.columns)
 
 
-def _reflect_table(
-    inspector: "Inspector", table: "Table", include_cols: None
-) -> None:
+def _reflect_table(inspector: Inspector, table: Table) -> None:
     if sqla_14:
         return inspector.reflect_table(table, None)
     else:
@@ -319,7 +361,7 @@ def _fk_spec(constraint):
     )
 
 
-def _fk_is_self_referential(constraint: "ForeignKeyConstraint") -> bool:
+def _fk_is_self_referential(constraint: ForeignKeyConstraint) -> bool:
     spec = constraint.elements[0]._get_colspec()  # type: ignore[attr-defined]
     tokens = spec.split(".")
     tokens.pop(-1)  # colname
@@ -328,7 +370,7 @@ def _fk_is_self_referential(constraint: "ForeignKeyConstraint") -> bool:
     return tablekey == constraint.parent.key
 
 
-def _is_type_bound(constraint: "Constraint") -> bool:
+def _is_type_bound(constraint: Constraint) -> bool:
     # this deals with SQLAlchemy #3260, don't copy CHECK constraints
     # that will be generated by the type.
     # new feature added for #3260
@@ -344,7 +386,7 @@ def _find_columns(clause):
 
 
 def _remove_column_from_collection(
-    collection: "ColumnCollection", column: Union["Column", "ColumnClause"]
+    collection: ColumnCollection, column: Union[Column, ColumnClause]
 ) -> None:
     """remove a column from a ColumnCollection."""
 
@@ -362,8 +404,8 @@ def _remove_column_from_collection(
 
 
 def _textual_index_column(
-    table: "Table", text_: Union[str, "TextClause", "ColumnElement"]
-) -> Union["ColumnElement", "Column"]:
+    table: Table, text_: Union[str, TextClause, ColumnElement]
+) -> Union[ColumnElement, Column]:
     """a workaround for the Index construct's severe lack of flexibility"""
     if isinstance(text_, str):
         c = Column(text_, sqltypes.NULLTYPE)
@@ -371,13 +413,15 @@ def _textual_index_column(
         return c
     elif isinstance(text_, TextClause):
         return _textual_index_element(table, text_)
+    elif isinstance(text_, _textual_index_element):
+        return _textual_index_column(table, text_.text)
     elif isinstance(text_, sql.ColumnElement):
         return _copy_expression(text_, table)
     else:
         raise ValueError("String or text() construct expected")
 
 
-def _copy_expression(expression: _CE, target_table: "Table") -> _CE:
+def _copy_expression(expression: _CE, target_table: Table) -> _CE:
     def replace(col):
         if (
             isinstance(col, Column)
@@ -416,7 +460,7 @@ class _textual_index_element(sql.ColumnElement):
 
     __visit_name__ = "_textual_idx_element"
 
-    def __init__(self, table: "Table", text: "TextClause") -> None:
+    def __init__(self, table: Table, text: TextClause) -> None:
         self.table = table
         self.text = text
         self.key = text.text
@@ -429,7 +473,7 @@ class _textual_index_element(sql.ColumnElement):
 
 @compiles(_textual_index_element)
 def _render_textual_index_column(
-    element: _textual_index_element, compiler: "SQLCompiler", **kw
+    element: _textual_index_element, compiler: SQLCompiler, **kw
 ) -> str:
     return compiler.process(element.text, **kw)
 
@@ -440,7 +484,7 @@ class _literal_bindparam(BindParameter):
 
 @compiles(_literal_bindparam)
 def _render_literal_bindparam(
-    element: _literal_bindparam, compiler: "SQLCompiler", **kw
+    element: _literal_bindparam, compiler: SQLCompiler, **kw
 ) -> str:
     return compiler.render_literal_bindparam(element, **kw)
 
@@ -453,7 +497,7 @@ def _get_index_column_names(idx):
     return [getattr(exp, "name", None) for exp in _get_index_expressions(idx)]
 
 
-def _column_kwargs(col: "Column") -> Mapping:
+def _column_kwargs(col: Column) -> Mapping:
     if sqla_13:
         return col.kwargs
     else:
@@ -461,7 +505,7 @@ def _column_kwargs(col: "Column") -> Mapping:
 
 
 def _get_constraint_final_name(
-    constraint: Union["Index", "Constraint"], dialect: Optional["Dialect"]
+    constraint: Union[Index, Constraint], dialect: Optional[Dialect]
 ) -> Optional[str]:
     if constraint.name is None:
         return None
@@ -501,7 +545,7 @@ def _get_constraint_final_name(
 
 
 def _constraint_is_named(
-    constraint: Union["Constraint", "Index"], dialect: Optional["Dialect"]
+    constraint: Union[Constraint, Index], dialect: Optional[Dialect]
 ) -> bool:
     if sqla_14:
         if constraint.name is None:
@@ -515,7 +559,7 @@ def _constraint_is_named(
         return constraint.name is not None
 
 
-def _is_mariadb(mysql_dialect: "Dialect") -> bool:
+def _is_mariadb(mysql_dialect: Dialect) -> bool:
     if sqla_14:
         return mysql_dialect.is_mariadb  # type: ignore[attr-defined]
     else:
@@ -529,7 +573,7 @@ def _mariadb_normalized_version_info(mysql_dialect):
     return mysql_dialect._mariadb_normalized_version_info
 
 
-def _insert_inline(table: Union["TableClause", "Table"]) -> "Insert":
+def _insert_inline(table: Union[TableClause, Table]) -> Insert:
     if sqla_14:
         return table.insert().inline()
     else:
@@ -547,5 +591,15 @@ else:
             "postgresql://", strategy="mock", executor=executor
         )
 
-    def _select(*columns, **kw) -> "Select":  # type: ignore[no-redef]
+    def _select(*columns, **kw) -> Select:  # type: ignore[no-redef]
         return sql.select(list(columns), **kw)  # type: ignore[call-overload]
+
+
+def is_expression_index(index: Index) -> bool:
+    expr: Any
+    for expr in index.expressions:
+        while isinstance(expr, UnaryExpression):
+            expr = expr.element
+        if not isinstance(expr, ColumnClause) or expr.is_literal:
+            return True
+    return False

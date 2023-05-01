@@ -49,6 +49,7 @@ from alembic.testing.fixtures import capture_context_buffer
 from alembic.testing.fixtures import op_fixture
 from alembic.util import CommandError
 from alembic.util import exc as alembic_exc
+from alembic.util.sqla_compat import _NONE_NAME
 from alembic.util.sqla_compat import _safe_commit_connection_transaction
 from alembic.util.sqla_compat import _select
 from alembic.util.sqla_compat import has_computed
@@ -819,6 +820,18 @@ class BatchApplyTest(TestBase):
             ddl_not_contains="CONSTRAINT uq1 UNIQUE",
         )
 
+    def test_add_ck_unnamed(self):
+        """test for #1195"""
+        impl = self._simple_fixture()
+        ck = self.op.schema_obj.check_constraint(_NONE_NAME, "tname", "y > 5")
+
+        impl.add_constraint(ck)
+        self._assert_impl(
+            impl,
+            colnames=["id", "x", "y"],
+            ddl_contains="CHECK (y > 5)",
+        )
+
     def test_add_ck(self):
         impl = self._simple_fixture()
         ck = self.op.schema_obj.check_constraint("ck1", "tname", "y > 5")
@@ -1116,7 +1129,6 @@ class CopyFromTest(TestBase):
         self.op = Operations(context)
         return context
 
-    @config.requirements.sqlalchemy_13
     def test_change_type(self):
         context = self._fixture()
         self.table.append_column(Column("toj", Text))
@@ -1444,6 +1456,19 @@ class BatchRoundTripTest(TestBase):
             t = Table("hasbool", self.metadata, Column("x", Integer))
             t.create(self.conn)
 
+    def test_add_constraint_type(self):
+        """test for #1195."""
+
+        with self.op.batch_alter_table("foo") as batch_op:
+            batch_op.add_column(Column("q", Boolean(create_constraint=True)))
+        insp = inspect(self.conn)
+
+        assert {
+            c["type"]._type_affinity
+            for c in insp.get_columns("foo")
+            if c["name"] == "q"
+        }.intersection([Boolean, Integer])
+
     def test_change_type_boolean_to_int(self):
         self._boolean_fixture()
         with self.op.batch_alter_table("hasbool") as batch_op:
@@ -1553,11 +1578,11 @@ class BatchRoundTripTest(TestBase):
 
         insp = inspect(self.conn)
         eq_(
-            set(
+            {
                 (ix["name"], tuple(ix["column_names"]))
                 for ix in insp.get_indexes("t_w_ix")
-            ),
-            set([("ix_data", ("data",)), ("ix_thing", ("thing",))]),
+            },
+            {("ix_data", ("data",)), ("ix_thing", ("thing",))},
         )
 
     def test_fk_points_to_me_auto(self):
@@ -2268,39 +2293,37 @@ class BatchRoundTripMySQLTest(BatchRoundTripTest):
 
     @exclusions.fails()
     def test_drop_pk_col_readd_pk_col(self):
-        super(BatchRoundTripMySQLTest, self).test_drop_pk_col_readd_pk_col()
+        super().test_drop_pk_col_readd_pk_col()
 
     @exclusions.fails()
     def test_drop_pk_col_readd_col_also_pk_const(self):
-        super(
-            BatchRoundTripMySQLTest, self
-        ).test_drop_pk_col_readd_col_also_pk_const()
+        super().test_drop_pk_col_readd_col_also_pk_const()
 
     @exclusions.fails()
     def test_rename_column_pk(self):
-        super(BatchRoundTripMySQLTest, self).test_rename_column_pk()
+        super().test_rename_column_pk()
 
     @exclusions.fails()
     def test_rename_column(self):
-        super(BatchRoundTripMySQLTest, self).test_rename_column()
+        super().test_rename_column()
 
     @exclusions.fails()
     def test_change_type(self):
-        super(BatchRoundTripMySQLTest, self).test_change_type()
+        super().test_change_type()
 
     def test_create_drop_index(self):
-        super(BatchRoundTripMySQLTest, self).test_create_drop_index()
+        super().test_create_drop_index()
 
     # fails on mariadb 10.2, succeeds on 10.3
     @exclusions.fails_if(config.requirements.mysql_check_col_name_change)
     def test_rename_column_boolean(self):
-        super(BatchRoundTripMySQLTest, self).test_rename_column_boolean()
+        super().test_rename_column_boolean()
 
     def test_change_type_boolean_to_int(self):
-        super(BatchRoundTripMySQLTest, self).test_change_type_boolean_to_int()
+        super().test_change_type_boolean_to_int()
 
     def test_change_type_int_to_boolean(self):
-        super(BatchRoundTripMySQLTest, self).test_change_type_int_to_boolean()
+        super().test_change_type_int_to_boolean()
 
 
 class BatchRoundTripPostgresqlTest(BatchRoundTripTest):
@@ -2327,34 +2350,26 @@ class BatchRoundTripPostgresqlTest(BatchRoundTripTest):
 
     @exclusions.fails()
     def test_drop_pk_col_readd_pk_col(self):
-        super(
-            BatchRoundTripPostgresqlTest, self
-        ).test_drop_pk_col_readd_pk_col()
+        super().test_drop_pk_col_readd_pk_col()
 
     @exclusions.fails()
     def test_drop_pk_col_readd_col_also_pk_const(self):
-        super(
-            BatchRoundTripPostgresqlTest, self
-        ).test_drop_pk_col_readd_col_also_pk_const()
+        super().test_drop_pk_col_readd_col_also_pk_const()
 
     @exclusions.fails()
     def test_change_type(self):
-        super(BatchRoundTripPostgresqlTest, self).test_change_type()
+        super().test_change_type()
 
     def test_create_drop_index(self):
-        super(BatchRoundTripPostgresqlTest, self).test_create_drop_index()
+        super().test_create_drop_index()
 
     @exclusions.fails()
     def test_change_type_int_to_boolean(self):
-        super(
-            BatchRoundTripPostgresqlTest, self
-        ).test_change_type_int_to_boolean()
+        super().test_change_type_int_to_boolean()
 
     @exclusions.fails()
     def test_change_type_boolean_to_int(self):
-        super(
-            BatchRoundTripPostgresqlTest, self
-        ).test_change_type_boolean_to_int()
+        super().test_change_type_boolean_to_int()
 
     def test_add_col_table_has_native_boolean(self):
         self._native_boolean_fixture()
